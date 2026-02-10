@@ -138,7 +138,7 @@ O projeto agora roda apenas com o entrypoint de alta vazão em `cmd/api_hightps`
 
 - Rodar local: `make run` (ou `go run ./cmd/api_hightps`)
 - Otimizações: buffer de cliques com `BulkWrite` no Mongo
-- Defaults otimizados: sem logs/metrics/tracing no hot path (toggle via env)
+- Defaults otimizados: sem logs/metrics no hot path e tracing OpenTelemetry sempre ativo
 
 Variáveis úteis (opcionais):
 - `CLICK_BUFFER_ENABLED=true`

@@ -14,7 +14,6 @@ x-app-base: &app-base
     - REDIRECT_STATUS=302
     - API_KEYS=${API_KEYS:-}
     - CREATE_RATE_LIMIT_PER_MINUTE=${CREATE_RATE_LIMIT_PER_MINUTE:-60}
-    - OTEL_ENABLED=${OTEL_ENABLED:-true}
     - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-http://jaeger:4318}
   depends_on:
     mongo:

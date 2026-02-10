@@ -25,7 +25,6 @@ type RouterOptions struct {
 	EnableCORS    bool
 	EnableLogging bool
 	EnableMetrics bool
-	EnableTracing bool
 
 	LinksHandlerOptions LinksHandlerOptions
 }
@@ -35,7 +34,6 @@ func DefaultRouterOptions() RouterOptions {
 		EnableCORS:    true,
 		EnableLogging: true,
 		EnableMetrics: true,
-		EnableTracing: true,
 		LinksHandlerOptions: LinksHandlerOptions{
 			AsyncClick:   true,
 			ClickTimeout: 2 * time.Second,
@@ -106,9 +104,5 @@ func NewRouterWithOptions(cfg *config.Config, linkService *links.Service, opts R
 		otelOptions = append(otelOptions, otelhttp.WithTracerProvider(telemetry.TracerProvider))
 	}
 
-	if opts.EnableTracing {
-		return otelhttp.NewHandler(innerHandler, cfg.App.Name, otelOptions...)
-	}
-
-	return innerHandler
+	return otelhttp.NewHandler(innerHandler, cfg.App.Name, otelOptions...)
 }

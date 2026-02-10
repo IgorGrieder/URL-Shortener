@@ -53,7 +53,6 @@ type SecurityConfig struct {
 }
 
 type OTelConfig struct {
-	Enabled  bool
 	Endpoint string
 }
 
@@ -91,7 +90,6 @@ func Load() (*Config, error) {
 			APIKeys: getEnvSlice("API_KEYS", nil),
 		},
 		OTel: OTelConfig{
-			Enabled:  getEnvBool("OTEL_ENABLED", false),
 			Endpoint: getEnv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4318"),
 		},
 	}
@@ -117,15 +115,6 @@ func getEnvInt(key string, defaultValue int) int {
 	if value := os.Getenv(key); value != "" {
 		if i, err := strconv.Atoi(value); err == nil {
 			return i
-		}
-	}
-	return defaultValue
-}
-
-func getEnvBool(key string, defaultValue bool) bool {
-	if value := os.Getenv(key); value != "" {
-		if b, err := strconv.ParseBool(value); err == nil {
-			return b
 		}
 	}
 	return defaultValue

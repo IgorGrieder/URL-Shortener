@@ -40,14 +40,12 @@ func main() {
 	)
 
 	var shutdownTracer func(context.Context) error
-	if cfg.OTel.Enabled {
-		shutdownTracer, err = telemetry.InitTracer(cfg.OTel.Endpoint, cfg.App.Name, cfg.App.Version)
-		if err != nil {
-			logger.Warn("Failed to initialize tracer, continuing without tracing", zap.Error(err))
-			shutdownTracer = nil
-		} else {
-			logger.Info("OpenTelemetry tracer initialized", zap.String("endpoint", cfg.OTel.Endpoint))
-		}
+	shutdownTracer, err = telemetry.InitTracer(cfg.OTel.Endpoint, cfg.App.Name, cfg.App.Version)
+	if err != nil {
+		logger.Warn("Failed to initialize tracer, continuing without tracing", zap.Error(err))
+		shutdownTracer = nil
+	} else {
+		logger.Info("OpenTelemetry tracer initialized", zap.String("endpoint", cfg.OTel.Endpoint))
 	}
 
 	mongoConn, err := db.ConnectMongo(cfg.MongoDB.URI, cfg.MongoDB.Database)
@@ -89,7 +87,6 @@ func main() {
 	routerOpts.EnableCORS = getEnvBool("HTTP_ENABLE_CORS", true)
 	routerOpts.EnableLogging = getEnvBool("HTTP_ENABLE_LOGGING", false)
 	routerOpts.EnableMetrics = getEnvBool("HTTP_ENABLE_METRICS", false)
-	routerOpts.EnableTracing = getEnvBool("HTTP_ENABLE_TRACING", cfg.OTel.Enabled)
 	routerOpts.LinksHandlerOptions = httpTransport.LinksHandlerOptions{
 		AsyncClick:   getEnvBool("REDIRECT_ASYNC_CLICK", false),
 		ClickTimeout: getEnvDuration("REDIRECT_CLICK_TIMEOUT", 2*time.Second),
