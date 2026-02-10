@@ -25,6 +25,7 @@ type linkDoc struct {
 	APIKey    string             `bson:"apiKey,omitempty"`
 	CreatedAt time.Time          `bson:"createdAt"`
 	ExpiresAt *time.Time         `bson:"expiresAt,omitempty"`
+	Clicks    int64              `bson:"clicks,omitempty"`
 }
 
 func NewLinksRepository(m *db.Mongo) (*LinksRepository, error) {
@@ -76,14 +77,7 @@ func (r *LinksRepository) FindBySlug(ctx context.Context, slug string) (*links.L
 	var doc linkDoc
 	err := r.coll.FindOne(ctx, bson.M{"slug": slug}).Decode(&doc)
 	if err == nil {
-		return &links.Link{
-			Slug:      doc.Slug,
-			URL:       doc.URL,
-			Notes:     doc.Notes,
-			APIKey:    doc.APIKey,
-			CreatedAt: doc.CreatedAt,
-			ExpiresAt: doc.ExpiresAt,
-		}, nil
+		return mapLinkDoc(doc), nil
 	}
 
 	if errors.Is(err, mongo.ErrNoDocuments) {
@@ -93,3 +87,55 @@ func (r *LinksRepository) FindBySlug(ctx context.Context, slug string) (*links.L
 	return nil, err
 }
 
+func (r *LinksRepository) FindActiveBySlugAndIncClick(ctx context.Context, slug string, at time.Time) (*links.Link, error) {
+	now := at.UTC()
+
+	filter := bson.M{
+		"slug": slug,
+		"$or": bson.A{
+			bson.M{"expiresAt": bson.M{"$exists": false}},
+			bson.M{"expiresAt": nil},
+			bson.M{"expiresAt": bson.M{"$gte": now}},
+		},
+	}
+
+	update := bson.M{
+		"$inc": bson.M{"clicks": 1},
+	}
+
+	var doc linkDoc
+	err := r.coll.FindOneAndUpdate(
+		ctx,
+		filter,
+		update,
+		options.FindOneAndUpdate().SetReturnDocument(options.After),
+	).Decode(&doc)
+	if err == nil {
+		return mapLinkDoc(doc), nil
+	}
+
+	if errors.Is(err, mongo.ErrNoDocuments) {
+		existing, findErr := r.FindBySlug(ctx, slug)
+		if findErr == nil && existing != nil {
+			return nil, links.ErrExpired
+		}
+		if findErr != nil {
+			return nil, findErr
+		}
+		return nil, links.ErrNotFound
+	}
+
+	return nil, err
+}
+
+func mapLinkDoc(doc linkDoc) *links.Link {
+	return &links.Link{
+		Slug:      doc.Slug,
+		URL:       doc.URL,
+		Notes:     doc.Notes,
+		APIKey:    doc.APIKey,
+		CreatedAt: doc.CreatedAt,
+		ExpiresAt: doc.ExpiresAt,
+		Clicks:    doc.Clicks,
+	}
+}

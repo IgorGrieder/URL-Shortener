@@ -79,16 +79,11 @@ func (s *Service) GetLink(ctx context.Context, slug string) (*Link, error) {
 }
 
 func (s *Service) Resolve(ctx context.Context, slug string) (*Link, error) {
-	link, err := s.GetLink(ctx, slug)
-	if err != nil {
-		return nil, err
+	slug = strings.TrimSpace(slug)
+	if slug == "" {
+		return nil, ErrNotFound
 	}
-
-	if link.ExpiresAt != nil && s.now().UTC().After(link.ExpiresAt.UTC()) {
-		return nil, ErrExpired
-	}
-
-	return link, nil
+	return s.linkRepo.FindActiveBySlugAndIncClick(ctx, slug, s.now().UTC())
 }
 
 func (s *Service) RecordClick(ctx context.Context, slug string) error {

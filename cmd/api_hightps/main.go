@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strconv"
 	"syscall"
 	"time"
 
@@ -66,34 +65,10 @@ func main() {
 		logger.Fatal("Failed to initialize click stats repository", zap.Error(err))
 	}
 
-	var statsShutdown func(context.Context) error
-	var bufferedStats *mongoStorage.BufferedClickStatsRepository
 	statsRepo := links.StatsRepository(mongoStatsRepo)
-	if getEnvBool("CLICK_BUFFER_ENABLED", true) {
-		buffered := mongoStorage.NewBufferedClickStatsRepository(mongoStatsRepo, mongoStorage.BufferedClickStatsOptions{
-			QueueSize:      getEnvInt("CLICK_BUFFER_QUEUE_SIZE", 1_000_000),
-			FlushInterval:  getEnvDuration("CLICK_BUFFER_FLUSH_INTERVAL", 250*time.Millisecond),
-			MaxBatchEvents: getEnvInt("CLICK_BUFFER_MAX_BATCH_EVENTS", 50_000),
-			FlushTimeout:   getEnvDuration("CLICK_BUFFER_FLUSH_TIMEOUT", 2*time.Second),
-		})
-		statsRepo = buffered
-		statsShutdown = buffered.Shutdown
-		bufferedStats = buffered
-	}
-
 	linkSvc := links.NewService(linkRepo, statsRepo, links.NewCryptoSlugger(), cfg.Shortener.SlugLength)
 
-	routerOpts := httpTransport.DefaultRouterOptions()
-	routerOpts.EnableCORS = getEnvBool("HTTP_ENABLE_CORS", true)
-	routerOpts.EnableLogging = getEnvBool("HTTP_ENABLE_LOGGING", false)
-	routerOpts.EnableMetrics = getEnvBool("HTTP_ENABLE_METRICS", false)
-	routerOpts.LinksHandlerOptions = httpTransport.LinksHandlerOptions{
-		AsyncClick:   getEnvBool("REDIRECT_ASYNC_CLICK", false),
-		ClickTimeout: getEnvDuration("REDIRECT_CLICK_TIMEOUT", 2*time.Second),
-		FastRedirect: getEnvBool("REDIRECT_FAST", true),
-	}
-
-	router := httpTransport.NewRouterWithOptions(cfg, linkSvc, routerOpts)
+	router := httpTransport.NewRouter(cfg, linkSvc)
 
 	server := &http.Server{
 		Addr:         fmt.Sprintf(":%s", cfg.Server.Port),
@@ -132,46 +107,10 @@ func main() {
 			logger.Error("Server shutdown error", zap.Error(err))
 		}
 
-		if statsShutdown != nil {
-			if err := statsShutdown(shutdownCtx); err != nil {
-				logger.Warn("Click buffer shutdown error", zap.Error(err))
-			}
-			if bufferedStats != nil {
-				logger.Info("Click buffer drained", zap.Int64("dropped", bufferedStats.Dropped()))
-			}
-		}
-
 		if shutdownTracer != nil {
 			_ = shutdownTracer(shutdownCtx)
 		}
 	}
 
 	logger.Info("Server stopped gracefully")
-}
-
-func getEnvInt(key string, defaultValue int) int {
-	if raw := os.Getenv(key); raw != "" {
-		if v, err := strconv.Atoi(raw); err == nil {
-			return v
-		}
-	}
-	return defaultValue
-}
-
-func getEnvBool(key string, defaultValue bool) bool {
-	if raw := os.Getenv(key); raw != "" {
-		if v, err := strconv.ParseBool(raw); err == nil {
-			return v
-		}
-	}
-	return defaultValue
-}
-
-func getEnvDuration(key string, defaultValue time.Duration) time.Duration {
-	if raw := os.Getenv(key); raw != "" {
-		if v, err := time.ParseDuration(raw); err == nil {
-			return v
-		}
-	}
-	return defaultValue
 }

@@ -137,13 +137,8 @@ Variáveis suportadas:
 O projeto agora roda apenas com o entrypoint de alta vazão em `cmd/api_hightps`:
 
 - Rodar local: `make run` (ou `go run ./cmd/api_hightps`)
-- Otimizações: buffer de cliques com `BulkWrite` no Mongo
-- Defaults otimizados: sem logs/metrics no hot path e tracing OpenTelemetry sempre ativo
+- Registro de cliques: `UpdateOne` com `$inc` direto no MongoDB
+- Defaults fixos: CORS/logging/metrics/tracing e redirect assíncrono sempre ativos
 
 Variáveis úteis (opcionais):
-- `CLICK_BUFFER_ENABLED=true`
-- `CLICK_BUFFER_FLUSH_INTERVAL=250ms`
-- `CLICK_BUFFER_MAX_BATCH_EVENTS=50000`
-- `HTTP_ENABLE_LOGGING=false`
-- `HTTP_ENABLE_METRICS=false`
-- `REDIRECT_FAST=true`
+- `OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318`

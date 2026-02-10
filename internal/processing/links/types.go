@@ -9,6 +9,7 @@ type Link struct {
 	CreatedAt time.Time
 	ExpiresAt *time.Time
 	APIKey    string
+	Clicks    int64
 }
 
 type DailyCount struct {
@@ -22,4 +23,3 @@ type CreateLinkInput struct {
 	ExpiresAt *time.Time
 	APIKey    string
 }
-

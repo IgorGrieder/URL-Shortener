@@ -37,7 +37,7 @@ func DefaultRouterOptions() RouterOptions {
 		LinksHandlerOptions: LinksHandlerOptions{
 			AsyncClick:   true,
 			ClickTimeout: 2 * time.Second,
-			FastRedirect: false,
+			FastRedirect: true,
 		},
 	}
 }
