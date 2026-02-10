@@ -17,6 +17,7 @@ var spanNames = map[string]string{
 	"GET /health":                 "health",
 	"GET /metrics":                "metrics",
 	"POST /api/links":             "links.create",
+	"DELETE /api/links/{slug}":    "links.delete",
 	"GET /api/links/{slug}/stats": "links.stats",
 	"GET /{slug}":                 "links.redirect",
 }
@@ -35,7 +36,7 @@ func DefaultRouterOptions() RouterOptions {
 		EnableLogging: true,
 		EnableMetrics: true,
 		LinksHandlerOptions: LinksHandlerOptions{
-			AsyncClick:   true,
+			AsyncClick:   false,
 			ClickTimeout: 2 * time.Second,
 			FastRedirect: true,
 		},
@@ -60,13 +61,17 @@ func NewRouterWithOptions(cfg *config.Config, linkService *links.Service, opts R
 	})
 	mux.Handle("GET /metrics", healthHandler.Metrics())
 
-	createMiddlewares := []func(http.Handler) http.Handler{
+	protectedLinkMiddlewares := []func(http.Handler) http.Handler{
 		middleware.APIKeyMiddleware(cfg.Security.APIKeys),
 	}
 
 	mux.Handle("POST /api/links", middleware.Chain(
 		http.HandlerFunc(linksHandler.Create),
-		createMiddlewares...,
+		protectedLinkMiddlewares...,
+	))
+	mux.Handle("DELETE /api/links/{slug}", middleware.Chain(
+		http.HandlerFunc(linksHandler.Delete),
+		protectedLinkMiddlewares...,
 	))
 
 	mux.HandleFunc("GET /api/links/{slug}/stats", linksHandler.Stats)

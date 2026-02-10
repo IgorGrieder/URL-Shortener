@@ -63,6 +63,10 @@ type createLinkResponse struct {
 	ExpiresAt *time.Time `json:"expiresAt,omitempty"`
 }
 
+type deleteLinkResponse struct {
+	Slug string `json:"slug"`
+}
+
 func (h *LinksHandler) Create(w http.ResponseWriter, r *http.Request) {
 	var req createLinkRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -117,6 +121,25 @@ func (h *LinksHandler) Create(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (h *LinksHandler) Delete(w http.ResponseWriter, r *http.Request) {
+	slug := r.PathValue("slug")
+
+	if err := h.svc.DeleteLink(r.Context(), slug); err != nil {
+		switch err {
+		case links.ErrNotFound:
+			httputils.WriteAPIError(w, r, constants.ErrLinkNotFound)
+		default:
+			logger.Error("failed to delete link", zap.Error(err), zap.String("slug", slug))
+			httputils.WriteAPIError(w, r, constants.ErrInternalError)
+		}
+		return
+	}
+
+	httputils.WriteAPISuccess(w, r, constants.SuccessLinkDeleted, deleteLinkResponse{
+		Slug: slug,
+	})
+}
+
 func (h *LinksHandler) Redirect(w http.ResponseWriter, r *http.Request) {
 	slug := r.PathValue("slug")
 
@@ -143,7 +166,9 @@ func (h *LinksHandler) Redirect(w http.ResponseWriter, r *http.Request) {
 			}
 		}()
 	} else {
-		_ = h.svc.RecordClick(r.Context(), slug)
+		if err := h.svc.RecordClick(r.Context(), slug); err != nil {
+			logger.Warn("failed to record click", zap.Error(err), zap.String("slug", slug))
+		}
 	}
 
 	if h.fastRedirect {
