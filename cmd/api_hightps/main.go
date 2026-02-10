@@ -65,8 +65,14 @@ func main() {
 		logger.Fatal("Failed to initialize click stats repository", zap.Error(err))
 	}
 
+	mongoOutboxRepo, err := mongoStorage.NewClickOutboxRepository(mongoConn)
+	if err != nil {
+		logger.Fatal("Failed to initialize click outbox repository", zap.Error(err))
+	}
+
 	statsRepo := links.StatsRepository(mongoStatsRepo)
-	linkSvc := links.NewService(linkRepo, statsRepo, links.NewCryptoSlugger(), cfg.Shortener.SlugLength)
+	outboxRepo := links.ClickOutboxRepository(mongoOutboxRepo)
+	linkSvc := links.NewService(linkRepo, statsRepo, outboxRepo, links.NewCryptoSlugger(), cfg.Shortener.SlugLength)
 
 	router := httpTransport.NewRouter(cfg, linkSvc)
 
