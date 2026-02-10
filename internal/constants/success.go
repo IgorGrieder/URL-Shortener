@@ -15,6 +15,10 @@ var (
 		Code:   CodeLinkCreated,
 		Status: http.StatusCreated,
 	}
+	SuccessLinkDeleted = APISuccess{
+		Code:   CodeLinkDeleted,
+		Status: http.StatusOK,
+	}
 	SuccessStatsFound = APISuccess{
 		Code:   CodeStatsFound,
 		Status: http.StatusOK,

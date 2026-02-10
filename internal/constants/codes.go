@@ -14,5 +14,6 @@ const (
 
 	// Success codes
 	CodeLinkCreated = "LINK_CREATED"
+	CodeLinkDeleted = "LINK_DELETED"
 	CodeStatsFound  = "STATS_FOUND"
 )
