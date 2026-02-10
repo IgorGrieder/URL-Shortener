@@ -68,12 +68,10 @@ services:
     <<: *app-base
 
   jaeger:
-    image: jaegertracing/jaeger:2
+    image: "jaegertracing/jaeger:${JAEGER_VERSION:-2.15.0}"
     ports:
       - "16686:16686"
       - "4318:4318"
-    environment:
-      - COLLECTOR_OTLP_ENABLED=true
 
   prometheus:
     image: prom/prometheus:latest
