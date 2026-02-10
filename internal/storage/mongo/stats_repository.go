@@ -100,6 +100,11 @@ func (r *ClickStatsRepository) GetDaily(ctx context.Context, slug string, from, 
 	return out, nil
 }
 
+func (r *ClickStatsRepository) DeleteBySlug(ctx context.Context, slug string) error {
+	_, err := r.coll.DeleteMany(ctx, bson.M{"slug": slug})
+	return err
+}
+
 func dateString(t time.Time) string {
 	return t.UTC().Format(time.DateOnly)
 }

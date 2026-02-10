@@ -87,6 +87,38 @@ func (r *LinksRepository) FindBySlug(ctx context.Context, slug string) (*links.L
 	return nil, err
 }
 
+func (r *LinksRepository) FindActiveBySlug(ctx context.Context, slug string, at time.Time) (*links.Link, error) {
+	now := at.UTC()
+
+	filter := bson.M{
+		"slug": slug,
+		"$or": bson.A{
+			bson.M{"expiresAt": bson.M{"$exists": false}},
+			bson.M{"expiresAt": nil},
+			bson.M{"expiresAt": bson.M{"$gte": now}},
+		},
+	}
+
+	var doc linkDoc
+	err := r.coll.FindOne(ctx, filter).Decode(&doc)
+	if err == nil {
+		return mapLinkDoc(doc), nil
+	}
+
+	if errors.Is(err, mongo.ErrNoDocuments) {
+		existing, findErr := r.FindBySlug(ctx, slug)
+		if findErr == nil && existing != nil {
+			return nil, links.ErrExpired
+		}
+		if findErr != nil {
+			return nil, findErr
+		}
+		return nil, links.ErrNotFound
+	}
+
+	return nil, err
+}
+
 func (r *LinksRepository) FindActiveBySlugAndIncClick(ctx context.Context, slug string, at time.Time) (*links.Link, error) {
 	now := at.UTC()
 
@@ -126,6 +158,14 @@ func (r *LinksRepository) FindActiveBySlugAndIncClick(ctx context.Context, slug 
 	}
 
 	return nil, err
+}
+
+func (r *LinksRepository) DeleteBySlug(ctx context.Context, slug string) (bool, error) {
+	result, err := r.coll.DeleteOne(ctx, bson.M{"slug": slug})
+	if err != nil {
+		return false, err
+	}
+	return result.DeletedCount > 0, nil
 }
 
 func mapLinkDoc(doc linkDoc) *links.Link {
