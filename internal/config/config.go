@@ -49,12 +49,7 @@ type ShortenerConfig struct {
 }
 
 type SecurityConfig struct {
-	APIKeys    []string
-	CreateRate RateLimitConfig
-}
-
-type RateLimitConfig struct {
-	RequestsPerMinute int
+	APIKeys []string
 }
 
 type OTelConfig struct {
@@ -94,9 +89,6 @@ func Load() (*Config, error) {
 		},
 		Security: SecurityConfig{
 			APIKeys: getEnvSlice("API_KEYS", nil),
-			CreateRate: RateLimitConfig{
-				RequestsPerMinute: getEnvInt("CREATE_RATE_LIMIT_PER_MINUTE", 60),
-			},
 		},
 		OTel: OTelConfig{
 			Enabled:  getEnvBool("OTEL_ENABLED", false),

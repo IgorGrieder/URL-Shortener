@@ -44,11 +44,11 @@ func DefaultRouterOptions() RouterOptions {
 	}
 }
 
-func NewRouter(cfg *config.Config, linkService *links.Service, createLimiter *middleware.RedisFixedWindowLimiter) http.Handler {
-	return NewRouterWithOptions(cfg, linkService, createLimiter, DefaultRouterOptions())
+func NewRouter(cfg *config.Config, linkService *links.Service) http.Handler {
+	return NewRouterWithOptions(cfg, linkService, DefaultRouterOptions())
 }
 
-func NewRouterWithOptions(cfg *config.Config, linkService *links.Service, createLimiter *middleware.RedisFixedWindowLimiter, opts RouterOptions) http.Handler {
+func NewRouterWithOptions(cfg *config.Config, linkService *links.Service, opts RouterOptions) http.Handler {
 	mux := http.NewServeMux()
 
 	healthHandler := NewHealthHandler()
@@ -64,7 +64,6 @@ func NewRouterWithOptions(cfg *config.Config, linkService *links.Service, create
 
 	createMiddlewares := []func(http.Handler) http.Handler{
 		middleware.APIKeyMiddleware(cfg.Security.APIKeys),
-		middleware.RateLimitMiddleware(createLimiter),
 	}
 
 	mux.Handle("POST /api/links", middleware.Chain(
