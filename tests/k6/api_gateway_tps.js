@@ -75,6 +75,16 @@ if (!Number.isFinite(maxVUs) || maxVUs <= 0) {
 if (!Number.isFinite(seedLinks) || seedLinks < 0) {
   fail("LT_SEED_LINKS must be zero or a positive number");
 }
+if (
+  (mode === "mixed" || mode === "redirect" || mode === "stats") &&
+  targetTPS >= 1500 &&
+  seedLinks > 0 &&
+  seedLinks < 200
+) {
+  console.warn(
+    "LT_SEED_LINKS is low for high TPS and can create hot-slug contention. Increase LT_SEED_LINKS (for example, 1000+).",
+  );
+}
 const localhostPattern = /^https?:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?(?:\/|$)/i;
 if (localhostPattern.test(baseURL) && (targetTPS > 10000 || maxVUs > 12000)) {
   const msg =

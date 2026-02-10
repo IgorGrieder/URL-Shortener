@@ -1,21 +1,19 @@
-.PHONY: help build run test clean docker-up docker-down docker-build lint k6-gateway k6-gateway-100k k6-gateway-mixed k6-gateway-create k6-gateway-redirect k6-gateway-stats k6-gateway-health
+.PHONY: help build run run-outbox-worker run-click-consumer test clean docker-up docker-down docker-build lint k6-crud k6-crud-smoke
 
 help:
 	@echo "Available commands:"
 	@echo "  make build       - Build the high-TPS application"
 	@echo "  make run         - Run the high-TPS application locally"
+	@echo "  make run-outbox-worker - Run outbox to Kafka publisher locally"
+	@echo "  make run-click-consumer - Run Kafka click consumer locally"
 	@echo "  make test        - Run tests"
 	@echo "  make clean       - Clean build artifacts"
 	@echo "  make docker-up   - Start containers (app + mongo)"
 	@echo "  make docker-down - Stop containers"
 	@echo "  make docker-build - Build and start containers"
 	@echo "  make lint        - Run golangci-lint (if installed)"
-	@echo "  make k6-gateway  - Run k6 mixed workload with local-safe defaults"
-	@echo "  make k6-gateway-100k - Run mixed workload with 100k TPS target"
-	@echo "  make k6-gateway-create - Run create-only load test (insertions)"
-	@echo "  make k6-gateway-redirect - Run redirect-only load test"
-	@echo "  make k6-gateway-stats - Run stats-only load test"
-	@echo "  make k6-gateway-health - Run health-only load test"
+	@echo "  make k6-crud-smoke - Run quick CRUD functional test (k6)"
+	@echo "  make k6-crud      - Run CRUD functional test profile (k6)"
 
 build:
 	@echo "Building (high TPS)..."
@@ -23,6 +21,12 @@ build:
 
 run:
 	@go run ./cmd/api_hightps
+
+run-outbox-worker:
+	@go run ./cmd/outbox_worker
+
+run-click-consumer:
+	@go run ./cmd/click_consumer
 
 test:
 	@GOCACHE=/tmp/gocache go test -v ./...
@@ -43,23 +47,8 @@ docker-build:
 lint:
 	@golangci-lint run ./...
 
-k6-gateway:
-	@LT_MODE=mixed LT_TARGET_TPS=1000 LT_PRE_ALLOCATED_VUS=400 LT_MAX_VUS=4000 LT_MIXED_CREATE_PCT=0 LT_MIXED_REDIRECT_PCT=90 LT_MIXED_STATS_PCT=10 k6 run ./tests/k6/api_gateway_tps.js
+k6-crud-smoke:
+	@LT_VUS=$${LT_VUS:-1} LT_ITERATIONS=$${LT_ITERATIONS:-5} LT_HTTP_TIMEOUT=$${LT_HTTP_TIMEOUT:-10s} LT_MAX_DURATION=$${LT_MAX_DURATION:-1m} k6 run ./tests/k6/api_gateway_crud.js
 
-k6-gateway-100k:
-	@LT_MODE=mixed LT_TARGET_TPS=100000 LT_PRE_ALLOCATED_VUS=$${LT_PRE_ALLOCATED_VUS:-20000} LT_MAX_VUS=$${LT_MAX_VUS:-50000} k6 run ./tests/k6/api_gateway_tps.js
-
-k6-gateway-mixed:
-	@LT_MODE=mixed LT_TARGET_TPS=1000 LT_PRE_ALLOCATED_VUS=400 LT_MAX_VUS=4000 k6 run ./tests/k6/api_gateway_tps.js
-
-k6-gateway-create:
-	@LT_MODE=create k6 run ./tests/k6/api_gateway_tps.js
-
-k6-gateway-redirect:
-	@LT_MODE=redirect k6 run ./tests/k6/api_gateway_tps.js
-
-k6-gateway-stats:
-	@LT_MODE=stats k6 run ./tests/k6/api_gateway_tps.js
-
-k6-gateway-health:
-	@LT_MODE=health k6 run ./tests/k6/api_gateway_tps.js
+k6-crud:
+	@LT_VUS=$${LT_VUS:-5} LT_ITERATIONS=$${LT_ITERATIONS:-30} LT_HTTP_TIMEOUT=$${LT_HTTP_TIMEOUT:-10s} LT_MAX_DURATION=$${LT_MAX_DURATION:-2m} k6 run ./tests/k6/api_gateway_crud.js

@@ -65,80 +65,72 @@ Escalar o sistema para:
 ## Implementação (MVP)
 
 - Arquitetura TPS (Transport / Processing / Storage): ver `docs/PLAN.md`.
-- Banco: **MongoDB** (collections `links` e `clicks_daily`).
+- Banco: **MongoDB** (collections `links`, `clicks_daily` e `click_outbox`).
+- Mensageria: **Kafka** (tópico `clicks.recorded`).
 - Endpoints:
   - `POST /api/links`
+  - `DELETE /api/links/{slug}`
   - `GET /{slug}`
   - `GET /api/links/{slug}/stats?from=YYYY-MM-DD&to=YYYY-MM-DD`
 
 ## Como rodar
 
-1) Suba MongoDB + API (5 instâncias) + Nginx + Kong:
+1) Suba MongoDB + Kafka + API (5 instâncias) + worker de outbox + consumer + Nginx + Kong:
 - `docker compose up -d --build`
 
 2) Teste rápido (Kong e Nginx exigem `X-User`):
 - Criar link: `curl -X POST http://localhost:8080/api/links -H 'Content-Type: application/json' -H 'X-User: demo' -d '{"url":"https://example.com"}'`
 - Redirecionar: abra `http://localhost:8080/<slug>` com header `X-User`
 
-## Teste de carga k6 (API Gateway, incluindo inserções)
+Execução local sem compose (processos separados):
+- API: `make run`
+- Worker de outbox: `make run-outbox-worker`
+- Consumer de cliques: `make run-click-consumer`
+
+## Teste funcional k6 (CRUD via Kong)
 
 Pré-requisito:
 - `k6` instalado ([https://k6.io/docs/get-started/installation/](https://k6.io/docs/get-started/installation/))
 - stack ativa com `docker compose up -d --build`
 
 Script:
-- `tests/k6/api_gateway_tps.js`
+- `tests/k6/api_gateway_crud.js`
 - guia detalhado: `tests/k6/README.md`
 
-Modo padrão do teste:
-- `mixed` (testa tudo): `POST /api/links` + `GET /{slug}` + `GET /api/links/{slug}/stats`
+Fluxo por iteração:
+- `POST /api/links`
+- `GET /{slug}`
+- `GET /api/links/{slug}/stats?from=YYYY-MM-DD&to=YYYY-MM-DD`
+- `DELETE /api/links/{slug}`
+- leitura após delete para validar `404`
 
 Comandos prontos:
-- `make k6-gateway` (mixed local-safe fixo: 1000 TPS, sem create para evitar rate limit padrão)
-- `make k6-gateway-100k` (mixed com `LT_TARGET_TPS=100000`)
-- `make k6-gateway-create` (somente inserções)
-- `make k6-gateway-redirect` (somente redirecionamento)
-- `make k6-gateway-stats` (somente stats)
-- `make k6-gateway-health` (somente health)
+- `make k6-crud-smoke` (rápido, baixo volume)
+- `make k6-crud` (perfil funcional padrão)
+- `make -f Makefile.k6 k6-crud` (mesmo perfil, Makefile dedicado de k6)
 
-Observação para execução local:
-- ao testar contra `localhost`, perfis muito altos de `LT_TARGET_TPS`/`LT_MAX_VUS` podem esgotar portas efêmeras do cliente e gerar `connect: can't assign requested address`
-- para 100k TPS, prefira geradores distribuídos/múltiplos IPs e ajuste de limites do host
-- o script agora falha rápido para perfil extremo em `localhost`; para forçar, use `LT_ALLOW_EXTREME_LOCALHOST=true`
-
-Importante para testes de inserção:
-- o endpoint de criação usa rate limit por minuto (default `CREATE_RATE_LIMIT_PER_MINUTE=60`)
-- para estresse real de inserção, suba com limite alto, por exemplo:
-  `CREATE_RATE_LIMIT_PER_MINUTE=1000000 docker compose up -d --build`
-
-Variáveis suportadas:
-- `LT_MODE` (`mixed|create|redirect|stats|health`, default: `mixed`)
+Variáveis suportadas (principais):
 - `LT_BASE_URL` (default: `http://localhost:8080`)
-- `LT_X_USER` (default: `k6-load`)
-- `LT_API_KEY` (opcional)
-- `LT_CREATE_URL` (default: `https://example.com`)
-- `LT_DURATION` (default: `1m`)
-- `LT_TARGET_TPS` (default: `1000`)
-- `LT_PRE_ALLOCATED_VUS` (default: `400`)
-- `LT_MAX_VUS` (default: `4000`)
-- `LT_HTTP_TIMEOUT` (default: `5s`)
-- `LT_SEED_LINKS` (default: `20`, slugs criados no setup para redirect/stats)
-- `LT_MIXED_CREATE_PCT` (default: `10`)
-- `LT_MIXED_REDIRECT_PCT` (default: `80`)
-- `LT_MIXED_STATS_PCT` (default: `10`)
-- `LT_MIXED_HEALTH_PCT` (default: `0`)
-- `LT_EXPECTED_CREATE_STATUSES` (default: `201`)
+- `LT_X_USER` (default: `k6-crud`)
+- `LT_API_KEY` (opcional; necessário se `API_KEYS` estiver configurado)
+- `LT_VUS` (default: `5`)
+- `LT_ITERATIONS` (default: `30`)
+- `LT_MAX_DURATION` (default: `2m`)
+- `LT_HTTP_TIMEOUT` (default: `10s`)
 - `LT_EXPECTED_REDIRECT_STATUSES` (default: `301,302`)
-- `LT_EXPECTED_STATS_STATUSES` (default: `200`)
-- `LT_EXPECTED_HEALTH_STATUSES` (default: `200`)
+- `LT_EXPECTED_DELETED_STATUSES` (default: `404`)
 
 ## Modo de execução (High TPS)
 
 O projeto agora roda apenas com o entrypoint de alta vazão em `cmd/api_hightps`:
 
 - Rodar local: `make run` (ou `go run ./cmd/api_hightps`)
-- Registro de cliques: `UpdateOne` com `$inc` direto no MongoDB
-- Defaults fixos: CORS/logging/metrics/tracing e redirect assíncrono sempre ativos
+- Registro de cliques: `GET /{slug}` grava evento em outbox no MongoDB; worker publica no Kafka; consumer agrega em `links.clicks` e `clicks_daily`
+- Consistência de métricas: eventual (com atraso curto conforme backlog)
+- Defaults fixos: CORS/logging/metrics/tracing e redirect otimizado
 
 Variáveis úteis (opcionais):
 - `OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318`
+- `KAFKA_BROKERS=kafka:9092`
+- `KAFKA_CLICK_TOPIC=clicks.recorded`
+- `KAFKA_CLICK_GROUP_ID=click-analytics`

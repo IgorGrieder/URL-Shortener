@@ -1,0 +1,12 @@
+.PHONY: help k6-crud-smoke k6-crud
+
+help:
+	@echo "k6 functional commands:"
+	@echo "  make -f Makefile.k6 k6-crud-smoke - Run quick CRUD functional test"
+	@echo "  make -f Makefile.k6 k6-crud       - Run CRUD functional profile"
+
+k6-crud-smoke:
+	@LT_VUS=$${LT_VUS:-1} LT_ITERATIONS=$${LT_ITERATIONS:-5} LT_HTTP_TIMEOUT=$${LT_HTTP_TIMEOUT:-10s} LT_MAX_DURATION=$${LT_MAX_DURATION:-1m} k6 run ./tests/k6/api_gateway_crud.js
+
+k6-crud:
+	@LT_VUS=$${LT_VUS:-5} LT_ITERATIONS=$${LT_ITERATIONS:-30} LT_HTTP_TIMEOUT=$${LT_HTTP_TIMEOUT:-10s} LT_MAX_DURATION=$${LT_MAX_DURATION:-2m} k6 run ./tests/k6/api_gateway_crud.js
