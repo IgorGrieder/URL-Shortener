@@ -107,7 +107,6 @@ Fluxo por iteração:
 Comandos prontos:
 - `make k6-crud-smoke` (rápido, baixo volume)
 - `make k6-crud` (perfil funcional padrão)
-- `make -f Makefile.k6 k6-crud` (mesmo perfil, Makefile dedicado de k6)
 
 Variáveis suportadas (principais):
 - `LT_BASE_URL` (default: `http://localhost:8080`)

@@ -21,7 +21,6 @@ From project root:
 ```bash
 make k6-crud-smoke
 make k6-crud
-make -f Makefile.k6 k6-crud
 ```
 
 ## Default Profile
