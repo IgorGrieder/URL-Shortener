@@ -10,12 +10,19 @@ import (
 type Service struct {
 	linkRepo   LinkRepository
 	statsRepo  StatsRepository
+	outboxRepo ClickOutboxRepository
 	slugger    Slugger
 	slugLength int
 	now        func() time.Time
 }
 
-func NewService(linkRepo LinkRepository, statsRepo StatsRepository, slugger Slugger, slugLength int) *Service {
+func NewService(
+	linkRepo LinkRepository,
+	statsRepo StatsRepository,
+	outboxRepo ClickOutboxRepository,
+	slugger Slugger,
+	slugLength int,
+) *Service {
 	if slugLength <= 0 {
 		slugLength = 6
 	}
@@ -23,6 +30,7 @@ func NewService(linkRepo LinkRepository, statsRepo StatsRepository, slugger Slug
 	return &Service{
 		linkRepo:   linkRepo,
 		statsRepo:  statsRepo,
+		outboxRepo: outboxRepo,
 		slugger:    slugger,
 		slugLength: slugLength,
 		now:        time.Now,
@@ -83,14 +91,17 @@ func (s *Service) Resolve(ctx context.Context, slug string) (*Link, error) {
 	if slug == "" {
 		return nil, ErrNotFound
 	}
-	return s.linkRepo.FindActiveBySlugAndIncClick(ctx, slug, s.now().UTC())
+	return s.linkRepo.FindActiveBySlug(ctx, slug, s.now().UTC())
 }
 
 func (s *Service) RecordClick(ctx context.Context, slug string) error {
 	if strings.TrimSpace(slug) == "" {
 		return nil
 	}
-	return s.statsRepo.IncDaily(ctx, slug, s.now().UTC())
+	if s.outboxRepo == nil {
+		return nil
+	}
+	return s.outboxRepo.EnqueueClick(ctx, slug, s.now().UTC())
 }
 
 func (s *Service) GetStats(ctx context.Context, slug string, from, to time.Time) ([]DailyCount, error) {
@@ -126,6 +137,23 @@ func (s *Service) GetStats(ctx context.Context, slug string, from, to time.Time)
 	}
 
 	return out, nil
+}
+
+func (s *Service) DeleteLink(ctx context.Context, slug string) error {
+	slug = strings.TrimSpace(slug)
+	if slug == "" {
+		return ErrNotFound
+	}
+
+	deleted, err := s.linkRepo.DeleteBySlug(ctx, slug)
+	if err != nil {
+		return err
+	}
+	if !deleted {
+		return ErrNotFound
+	}
+
+	return s.statsRepo.DeleteBySlug(ctx, slug)
 }
 
 func validateAndNormalizeURL(raw string) (string, error) {
