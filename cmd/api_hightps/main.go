@@ -16,9 +16,7 @@ import (
 	"github.com/IgorGrieder/encurtador-url/internal/infrastructure/telemetry"
 	"github.com/IgorGrieder/encurtador-url/internal/processing/links"
 	mongoStorage "github.com/IgorGrieder/encurtador-url/internal/storage/mongo"
-	redisStorage "github.com/IgorGrieder/encurtador-url/internal/storage/redis"
 	httpTransport "github.com/IgorGrieder/encurtador-url/internal/transport/http"
-	"github.com/IgorGrieder/encurtador-url/internal/transport/http/middleware"
 	"go.uber.org/zap"
 )
 
@@ -87,19 +85,6 @@ func main() {
 
 	linkSvc := links.NewService(linkRepo, statsRepo, links.NewCryptoSlugger(), cfg.Shortener.SlugLength)
 
-	redisClient, err := redisStorage.New(redisStorage.Config{
-		Addr:     cfg.Redis.Addr,
-		Password: cfg.Redis.Password,
-		DB:       cfg.Redis.DB,
-	})
-	if err != nil {
-		logger.Fatal("Failed to connect to Redis", zap.Error(err))
-	}
-	defer func() { _ = redisClient.Close() }()
-
-	redisLimiterStore := redisStorage.NewFixedWindowLimiter(redisClient, "rl:create", time.Minute)
-	createLimiter := middleware.NewRedisFixedWindowLimiter(redisLimiterStore, cfg.Security.CreateRate.RequestsPerMinute)
-
 	routerOpts := httpTransport.DefaultRouterOptions()
 	routerOpts.EnableCORS = getEnvBool("HTTP_ENABLE_CORS", true)
 	routerOpts.EnableLogging = getEnvBool("HTTP_ENABLE_LOGGING", false)
@@ -111,7 +96,7 @@ func main() {
 		FastRedirect: getEnvBool("REDIRECT_FAST", true),
 	}
 
-	router := httpTransport.NewRouterWithOptions(cfg, linkSvc, createLimiter, routerOpts)
+	router := httpTransport.NewRouterWithOptions(cfg, linkSvc, routerOpts)
 
 	server := &http.Server{
 		Addr:         fmt.Sprintf(":%s", cfg.Server.Port),
