@@ -32,11 +32,6 @@ var (
 		Message: MsgInternalError,
 		Status:  http.StatusInternalServerError,
 	}
-	ErrNotFound = APIError{
-		Code:    CodeNotFound,
-		Message: MsgNotFound,
-		Status:  http.StatusNotFound,
-	}
 )
 
 var (
@@ -44,11 +39,6 @@ var (
 		Code:    CodeUnauthorized,
 		Message: MsgUnauthorized,
 		Status:  http.StatusUnauthorized,
-	}
-	ErrRateLimited = APIError{
-		Code:    CodeRateLimited,
-		Message: MsgRateLimited,
-		Status:  http.StatusTooManyRequests,
 	}
 
 	// Shortener-specific errors
@@ -61,10 +51,5 @@ var (
 		Code:    CodeLinkNotFound,
 		Message: MsgLinkNotFound,
 		Status:  http.StatusNotFound,
-	}
-	ErrLinkExpired = APIError{
-		Code:    CodeLinkExpired,
-		Message: MsgLinkExpired,
-		Status:  http.StatusGone,
 	}
 )

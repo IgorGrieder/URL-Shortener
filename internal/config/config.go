@@ -13,7 +13,6 @@ type Config struct {
 	App       AppConfig
 	Server    ServerConfig
 	MongoDB   MongoDBConfig
-	Redis     RedisConfig
 	Shortener ShortenerConfig
 	Security  SecurityConfig
 	OTel      OTelConfig
@@ -34,12 +33,6 @@ type ServerConfig struct {
 type MongoDBConfig struct {
 	URI      string
 	Database string
-}
-
-type RedisConfig struct {
-	Addr     string
-	Password string
-	DB       int
 }
 
 type ShortenerConfig struct {
@@ -75,11 +68,6 @@ func Load() (*Config, error) {
 		MongoDB: MongoDBConfig{
 			URI:      getEnv("MONGODB_URI", "mongodb://localhost:27017"),
 			Database: getEnv("MONGODB_DATABASE", "encurtador"),
-		},
-		Redis: RedisConfig{
-			Addr:     getEnv("REDIS_ADDR", "localhost:6379"),
-			Password: getEnv("REDIS_PASSWORD", ""),
-			DB:       getEnvInt("REDIS_DB", 0),
 		},
 		Shortener: ShortenerConfig{
 			BaseURL:        getEnv("SHORTENER_BASE_URL", "http://localhost:8080"),

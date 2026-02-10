@@ -28,14 +28,6 @@ type LinksHandler struct {
 	fastRedirect bool
 }
 
-func NewLinksHandler(cfg *config.Config, svc *links.Service) *LinksHandler {
-	return NewLinksHandlerWithOptions(cfg, svc, LinksHandlerOptions{
-		AsyncClick:   true,
-		ClickTimeout: 2 * time.Second,
-		FastRedirect: true,
-	})
-}
-
 type LinksHandlerOptions struct {
 	AsyncClick   bool
 	ClickTimeout time.Duration
