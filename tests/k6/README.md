@@ -42,7 +42,6 @@ make k6-crud
 ## Environment Variables
 
 - `LT_BASE_URL` (default `http://localhost:8080`)
-- `LT_X_USER` (default `k6-crud`)
 - `LT_API_KEY` (optional)
 - `LT_VUS`
 - `LT_ITERATIONS`
@@ -53,6 +52,4 @@ make k6-crud
 
 ## Important Notes
 
-- Kong/Nginx require header `X-User`; the script sends it by default.
 - If `API_KEYS` is configured, set `LT_API_KEY` so create/delete requests are authorized.
-- The create endpoint has rate limiting (`CREATE_RATE_LIMIT_PER_MINUTE`, default `60`). Keep functional test volume low unless you raise this limit.

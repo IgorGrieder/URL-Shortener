@@ -3,7 +3,6 @@ import { check, fail } from "k6";
 import { Counter } from "k6/metrics";
 
 const baseURL = (__ENV.LT_BASE_URL || "http://localhost:8080").trim();
-const xUser = (__ENV.LT_X_USER || "k6-crud").trim();
 const apiKey = (__ENV.LT_API_KEY || "").trim();
 const httpTimeout = (__ENV.LT_HTTP_TIMEOUT || "10s").trim();
 
@@ -75,10 +74,7 @@ export const options = {
 };
 
 function buildHeaders(extra = {}) {
-  const headers = {
-    "X-User": xUser,
-    ...extra,
-  };
+  const headers = { ...extra };
   if (apiKey !== "") {
     headers["X-API-Key"] = apiKey;
   }
@@ -154,7 +150,7 @@ export function setup() {
   );
 
   if (response.status === 401) {
-    fail("setup failed: gateway denied request (check LT_X_USER header)");
+    fail("setup failed: gateway denied request");
   }
   if (response.status !== 200) {
     fail(`setup failed: /health returned ${response.status}, expected 200`);
