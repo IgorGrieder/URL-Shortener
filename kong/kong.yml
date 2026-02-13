@@ -3,14 +3,6 @@ services:
   - name: nginx-service
     url: http://nginx:8080
     routes:
-      - name: allow-with-x-user
-        expression: 'any(http.headers.x_user) ~ r#".+"#'
-        priority: 100
-      - name: deny-missing-x-user
+      - name: public-route
         expression: 'http.path ^= "/"'
         priority: 10
-        plugins:
-          - name: request-termination
-            config:
-              status_code: 401
-              message: "X-User header required"
