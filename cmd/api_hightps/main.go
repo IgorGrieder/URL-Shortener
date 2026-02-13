@@ -10,11 +10,9 @@ import (
 	"time"
 
 	"github.com/IgorGrieder/encurtador-url/internal/config"
-	"github.com/IgorGrieder/encurtador-url/internal/infrastructure/db"
 	"github.com/IgorGrieder/encurtador-url/internal/infrastructure/logger"
 	"github.com/IgorGrieder/encurtador-url/internal/infrastructure/telemetry"
 	"github.com/IgorGrieder/encurtador-url/internal/processing/links"
-	mongoStorage "github.com/IgorGrieder/encurtador-url/internal/storage/mongo"
 	httpTransport "github.com/IgorGrieder/encurtador-url/internal/transport/http"
 	"go.uber.org/zap"
 )
@@ -47,31 +45,12 @@ func main() {
 		logger.Info("OpenTelemetry tracer initialized", zap.String("endpoint", cfg.OTel.Endpoint))
 	}
 
-	mongoConn, err := db.ConnectMongo(cfg.MongoDB.URI, cfg.MongoDB.Database)
+	linkRepo, statsRepo, outboxRepo, closeStorage, err := initStorage(cfg)
 	if err != nil {
-		logger.Fatal("Failed to connect to MongoDB", zap.Error(err))
+		logger.Fatal("Failed to initialize storage", zap.Error(err))
 	}
-	defer func() { _ = mongoConn.Disconnect() }()
+	defer closeStorage()
 
-	mongoLinkRepo, err := mongoStorage.NewLinksRepository(mongoConn)
-	if err != nil {
-		logger.Fatal("Failed to initialize links repository", zap.Error(err))
-	}
-
-	linkRepo := links.LinkRepository(mongoLinkRepo)
-
-	mongoStatsRepo, err := mongoStorage.NewClickStatsRepository(mongoConn)
-	if err != nil {
-		logger.Fatal("Failed to initialize click stats repository", zap.Error(err))
-	}
-
-	mongoOutboxRepo, err := mongoStorage.NewClickOutboxRepository(mongoConn)
-	if err != nil {
-		logger.Fatal("Failed to initialize click outbox repository", zap.Error(err))
-	}
-
-	statsRepo := links.StatsRepository(mongoStatsRepo)
-	outboxRepo := links.ClickOutboxRepository(mongoOutboxRepo)
 	linkSvc := links.NewService(linkRepo, statsRepo, outboxRepo, links.NewCryptoSlugger(), cfg.Shortener.SlugLength)
 
 	router := httpTransport.NewRouter(cfg, linkSvc)
