@@ -2,9 +2,6 @@ package config
 
 import (
 	"fmt"
-	"os"
-	"strconv"
-	"strings"
 
 	"github.com/joho/godotenv"
 )
@@ -12,7 +9,7 @@ import (
 type Config struct {
 	App       AppConfig
 	Server    ServerConfig
-	MongoDB   MongoDBConfig
+	Postgres  PostgresConfig
 	Shortener ShortenerConfig
 	Security  SecurityConfig
 	OTel      OTelConfig
@@ -30,9 +27,13 @@ type ServerConfig struct {
 	Host string
 }
 
-type MongoDBConfig struct {
-	URI      string
-	Database string
+type PostgresConfig struct {
+	Host     string
+	Port     string
+	User     string
+	Password string
+	DBName   string
+	SSLMode  string
 }
 
 type ShortenerConfig struct {
@@ -56,29 +57,33 @@ func Load() (*Config, error) {
 
 	cfg := &Config{
 		App: AppConfig{
-			Name:     getEnv("APP_NAME", "encurtador-url"),
-			Version:  getEnv("APP_VERSION", "0.1.0"),
-			Env:      getEnv("APP_ENV", "development"),
-			LogLevel: getEnv("LOG_LEVEL", "info"),
+			Name:     GetEnv("APP_NAME", "encurtador-url"),
+			Version:  GetEnv("APP_VERSION", "0.1.0"),
+			Env:      GetEnv("APP_ENV", "development"),
+			LogLevel: GetEnv("LOG_LEVEL", "info"),
 		},
 		Server: ServerConfig{
-			Port: getEnv("APP_PORT", "8080"),
-			Host: getEnv("APP_HOST", "localhost"),
+			Port: GetEnv("APP_PORT", "8080"),
+			Host: GetEnv("APP_HOST", "localhost"),
 		},
-		MongoDB: MongoDBConfig{
-			URI:      getEnv("MONGODB_URI", "mongodb://localhost:27017"),
-			Database: getEnv("MONGODB_DATABASE", "encurtador"),
+		Postgres: PostgresConfig{
+			Host:     GetEnv("DB_HOST", "localhost"),
+			Port:     GetEnv("DB_PORT", "5432"),
+			User:     GetEnv("DB_USER", "postgres"),
+			Password: GetEnv("DB_PASSWORD", "postgres"),
+			DBName:   GetEnv("DB_NAME", "encurtador"),
+			SSLMode:  GetEnv("DB_SSL_MODE", "disable"),
 		},
 		Shortener: ShortenerConfig{
-			BaseURL:        getEnv("SHORTENER_BASE_URL", "http://localhost:8080"),
-			SlugLength:     getEnvInt("SLUG_LENGTH", 6),
-			RedirectStatus: getEnvInt("REDIRECT_STATUS", 302),
+			BaseURL:        GetEnv("SHORTENER_BASE_URL", "http://localhost:8080"),
+			SlugLength:     GetEnvInt("SLUG_LENGTH", 6),
+			RedirectStatus: GetEnvInt("REDIRECT_STATUS", 302),
 		},
 		Security: SecurityConfig{
-			APIKeys: getEnvSlice("API_KEYS", nil),
+			APIKeys: SplitCSV(GetEnv("API_KEYS", "")),
 		},
 		OTel: OTelConfig{
-			Endpoint: getEnv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4318"),
+			Endpoint: GetEnv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4318"),
 		},
 	}
 
@@ -92,37 +97,14 @@ func Load() (*Config, error) {
 	return cfg, nil
 }
 
-func getEnv(key, defaultValue string) string {
-	if value := os.Getenv(key); value != "" {
-		return value
-	}
-	return defaultValue
-}
-
-func getEnvInt(key string, defaultValue int) int {
-	if value := os.Getenv(key); value != "" {
-		if i, err := strconv.Atoi(value); err == nil {
-			return i
-		}
-	}
-	return defaultValue
-}
-
-func getEnvSlice(key string, defaultValue []string) []string {
-	value := strings.TrimSpace(os.Getenv(key))
-	if value == "" {
-		return defaultValue
-	}
-	parts := strings.Split(value, ",")
-	out := make([]string, 0, len(parts))
-	for _, part := range parts {
-		trimmed := strings.TrimSpace(part)
-		if trimmed != "" {
-			out = append(out, trimmed)
-		}
-	}
-	if len(out) == 0 {
-		return defaultValue
-	}
-	return out
+func (c PostgresConfig) DSN() string {
+	return fmt.Sprintf(
+		"host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
+		c.Host,
+		c.Port,
+		c.User,
+		c.Password,
+		c.DBName,
+		c.SSLMode,
+	)
 }
