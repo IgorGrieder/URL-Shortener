@@ -6,16 +6,16 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
+	"github.com/IgorGrieder/encurtador-url/internal/config"
 	"github.com/IgorGrieder/encurtador-url/internal/events"
 	"github.com/IgorGrieder/encurtador-url/internal/infrastructure/db"
 	"github.com/IgorGrieder/encurtador-url/internal/infrastructure/logger"
 	"github.com/IgorGrieder/encurtador-url/internal/infrastructure/telemetry"
-	mongoStorage "github.com/IgorGrieder/encurtador-url/internal/storage/mongo"
+	postgresStorage "github.com/IgorGrieder/encurtador-url/internal/storage/postgres"
 	"github.com/segmentio/kafka-go"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -25,16 +25,16 @@ import (
 	"go.uber.org/zap"
 )
 
-type config struct {
-	appEnv        string
-	appName       string
-	appVersion    string
-	otelEndpoint  string
-	mongoURI      string
-	mongoDatabase string
+type workerConfig struct {
+	appEnv       string
+	appName      string
+	appVersion   string
+	otelEndpoint string
+	postgresDSN  string
 
 	kafkaBrokers []string
 	kafkaTopic   string
+	workerID     string
 
 	pollInterval time.Duration
 	batchSize    int
@@ -42,6 +42,7 @@ type config struct {
 	retryBase    time.Duration
 	retryMax     time.Duration
 	idleWait     time.Duration
+	claimLease   time.Duration
 }
 
 func main() {
@@ -80,13 +81,13 @@ func main() {
 		}
 	}()
 
-	mongoConn, err := db.ConnectMongo(cfg.mongoURI, cfg.mongoDatabase)
+	pgConn, err := db.ConnectPostgres(context.Background(), cfg.postgresDSN)
 	if err != nil {
-		logger.Fatal("failed to connect to MongoDB", zap.Error(err))
+		logger.Fatal("failed to connect to PostgreSQL", zap.Error(err))
 	}
-	defer func() { _ = mongoConn.Disconnect() }()
+	defer pgConn.Close()
 
-	outboxRepo, err := mongoStorage.NewClickOutboxRepository(mongoConn)
+	outboxRepo, err := postgresStorage.NewClickOutboxRepository(pgConn)
 	if err != nil {
 		logger.Fatal("failed to initialize outbox repository", zap.Error(err))
 	}
@@ -111,8 +112,10 @@ func main() {
 	logger.Info("outbox worker started",
 		zap.Strings("kafka_brokers", cfg.kafkaBrokers),
 		zap.String("kafka_topic", cfg.kafkaTopic),
+		zap.String("worker_id", cfg.workerID),
 		zap.Int("batch_size", cfg.batchSize),
 		zap.Duration("poll_interval", cfg.pollInterval),
+		zap.Duration("claim_lease", cfg.claimLease),
 	)
 
 	ticker := time.NewTicker(cfg.pollInterval)
@@ -154,11 +157,11 @@ func main() {
 
 func processBatch(
 	ctx context.Context,
-	repo *mongoStorage.ClickOutboxRepository,
+	repo *postgresStorage.ClickOutboxRepository,
 	writer *kafka.Writer,
-	cfg config,
+	cfg workerConfig,
 ) (int, error) {
-	eventsBatch, err := repo.ListPending(ctx, time.Now().UTC(), int64(cfg.batchSize))
+	eventsBatch, err := repo.ClaimPending(ctx, time.Now().UTC(), int64(cfg.batchSize), cfg.workerID, cfg.claimLease)
 	if err != nil {
 		return 0, err
 	}
@@ -170,15 +173,15 @@ func processBatch(
 	tracer := otel.Tracer("outbox-worker")
 	for _, ev := range eventsBatch {
 		msgPayload := events.ClickRecorded{
-			EventID:    ev.ID.Hex(),
+			EventID:    ev.ID,
 			Slug:       ev.Slug,
 			OccurredAt: ev.OccurredAt.UTC().Format(time.RFC3339Nano),
 		}
 		value, err := json.Marshal(msgPayload)
 		if err != nil {
-			logger.Error("failed to marshal outbox event", zap.Error(err), zap.String("event_id", ev.ID.Hex()))
+			logger.Error("failed to marshal outbox event", zap.Error(err), zap.String("event_id", ev.ID))
 			delay := backoffDelay(cfg.retryBase, cfg.retryMax, ev.Attempts+1)
-			_ = repo.MarkRetry(ctx, ev.ID, truncateErr(err), time.Now().UTC().Add(delay))
+			_ = repo.MarkRetry(ctx, ev.ID, cfg.workerID, truncateErr(err), time.Now().UTC().Add(delay))
 			continue
 		}
 
@@ -192,7 +195,7 @@ func processBatch(
 				attribute.String("messaging.system", "kafka"),
 				attribute.String("messaging.destination.name", cfg.kafkaTopic),
 				attribute.String("messaging.operation", "publish"),
-				attribute.String("messaging.message.id", ev.ID.Hex()),
+				attribute.String("messaging.message.id", ev.ID),
 				attribute.String("messaging.kafka.message_key", ev.Slug),
 			),
 		)
@@ -210,13 +213,13 @@ func processBatch(
 			span.RecordError(err)
 			span.SetStatus(codes.Error, "kafka publish failed")
 			delay := backoffDelay(cfg.retryBase, cfg.retryMax, ev.Attempts+1)
-			if markErr := repo.MarkRetry(ctx, ev.ID, truncateErr(err), time.Now().UTC().Add(delay)); markErr != nil {
+			if markErr := repo.MarkRetry(ctx, ev.ID, cfg.workerID, truncateErr(err), time.Now().UTC().Add(delay)); markErr != nil {
 				span.RecordError(markErr)
-				logger.Error("failed to mark outbox retry", zap.Error(markErr), zap.String("event_id", ev.ID.Hex()))
+				logger.Error("failed to mark outbox retry", zap.Error(markErr), zap.String("event_id", ev.ID))
 			}
 			logger.Warn("failed to publish outbox event",
 				zap.Error(err),
-				zap.String("event_id", ev.ID.Hex()),
+				zap.String("event_id", ev.ID),
 				zap.String("slug", ev.Slug),
 				zap.Duration("retry_in", delay),
 			)
@@ -224,10 +227,10 @@ func processBatch(
 			continue
 		}
 
-		if err := repo.MarkSent(ctx, ev.ID); err != nil {
+		if err := repo.MarkSent(ctx, ev.ID, cfg.workerID); err != nil {
 			span.RecordError(err)
 			span.SetStatus(codes.Error, "mark sent failed")
-			logger.Error("failed to mark outbox event as sent", zap.Error(err), zap.String("event_id", ev.ID.Hex()))
+			logger.Error("failed to mark outbox event as sent", zap.Error(err), zap.String("event_id", ev.ID))
 			span.End()
 			continue
 		}
@@ -239,41 +242,51 @@ func processBatch(
 	return processed, nil
 }
 
-func loadConfig() (config, error) {
-	cfg := config{
-		appEnv:        getEnv("APP_ENV", "production"),
-		appName:       getEnv("APP_NAME", "encurtador-url"),
-		appVersion:    getEnv("APP_VERSION", "0.1.0"),
-		otelEndpoint:  getEnv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://jaeger:4318"),
-		mongoURI:      getEnv("MONGODB_URI", "mongodb://localhost:27017"),
-		mongoDatabase: getEnv("MONGODB_DATABASE", "encurtador"),
-		kafkaBrokers:  splitCSV(getEnv("KAFKA_BROKERS", "kafka:9092")),
-		kafkaTopic:    getEnv("KAFKA_CLICK_TOPIC", "clicks.recorded"),
-		pollInterval:  getEnvDuration("OUTBOX_POLL_INTERVAL", 250*time.Millisecond),
-		batchSize:     getEnvInt("OUTBOX_BATCH_SIZE", 200),
-		writeTimeout:  getEnvDuration("OUTBOX_WRITE_TIMEOUT", 5*time.Second),
-		retryBase:     getEnvDuration("OUTBOX_RETRY_BASE_DELAY", 1*time.Second),
-		retryMax:      getEnvDuration("OUTBOX_RETRY_MAX_DELAY", 30*time.Second),
-		idleWait:      getEnvDuration("OUTBOX_IDLE_WAIT", 50*time.Millisecond),
+func loadConfig() (cfg workerConfig, _ error) {
+	cfg = workerConfig{
+		appEnv:       config.GetEnv("APP_ENV", "production"),
+		appName:      config.GetEnv("APP_NAME", "encurtador-url"),
+		appVersion:   config.GetEnv("APP_VERSION", "0.1.0"),
+		otelEndpoint: config.GetEnv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://jaeger:4318"),
+		postgresDSN:  config.GetEnv("DB_DSN", config.DefaultPostgresDSN()),
+		kafkaBrokers: config.SplitCSV(config.GetEnv("KAFKA_BROKERS", "kafka:9092")),
+		kafkaTopic:   config.GetEnv("KAFKA_CLICK_TOPIC", "clicks.recorded"),
+		workerID:     config.GetEnv("OUTBOX_WORKER_ID", config.DefaultWorkerID("outbox-worker")),
+		pollInterval: config.GetEnvDuration("OUTBOX_POLL_INTERVAL", 250*time.Millisecond),
+		batchSize:    config.GetEnvInt("OUTBOX_BATCH_SIZE", 200),
+		writeTimeout: config.GetEnvDuration("OUTBOX_WRITE_TIMEOUT", 5*time.Second),
+		retryBase:    config.GetEnvDuration("OUTBOX_RETRY_BASE_DELAY", 1*time.Second),
+		retryMax:     config.GetEnvDuration("OUTBOX_RETRY_MAX_DELAY", 30*time.Second),
+		idleWait:     config.GetEnvDuration("OUTBOX_IDLE_WAIT", 50*time.Millisecond),
+		claimLease:   config.GetEnvDuration("OUTBOX_CLAIM_LEASE", 30*time.Second),
 	}
 
+	if strings.TrimSpace(cfg.postgresDSN) == "" {
+		return workerConfig{}, fmt.Errorf("DB_DSN must not be empty")
+	}
 	if len(cfg.kafkaBrokers) == 0 {
-		return config{}, fmt.Errorf("KAFKA_BROKERS must contain at least one broker")
+		return workerConfig{}, fmt.Errorf("KAFKA_BROKERS must contain at least one broker")
 	}
 	if cfg.batchSize <= 0 {
-		return config{}, fmt.Errorf("OUTBOX_BATCH_SIZE must be > 0")
+		return workerConfig{}, fmt.Errorf("OUTBOX_BATCH_SIZE must be > 0")
 	}
 	if cfg.pollInterval <= 0 {
-		return config{}, fmt.Errorf("OUTBOX_POLL_INTERVAL must be > 0")
+		return workerConfig{}, fmt.Errorf("OUTBOX_POLL_INTERVAL must be > 0")
 	}
 	if cfg.writeTimeout <= 0 {
-		return config{}, fmt.Errorf("OUTBOX_WRITE_TIMEOUT must be > 0")
+		return workerConfig{}, fmt.Errorf("OUTBOX_WRITE_TIMEOUT must be > 0")
 	}
 	if cfg.retryBase <= 0 {
-		return config{}, fmt.Errorf("OUTBOX_RETRY_BASE_DELAY must be > 0")
+		return workerConfig{}, fmt.Errorf("OUTBOX_RETRY_BASE_DELAY must be > 0")
 	}
 	if cfg.retryMax < cfg.retryBase {
-		return config{}, fmt.Errorf("OUTBOX_RETRY_MAX_DELAY must be >= OUTBOX_RETRY_BASE_DELAY")
+		return workerConfig{}, fmt.Errorf("OUTBOX_RETRY_MAX_DELAY must be >= OUTBOX_RETRY_BASE_DELAY")
+	}
+	if strings.TrimSpace(cfg.workerID) == "" {
+		return workerConfig{}, fmt.Errorf("OUTBOX_WORKER_ID must not be empty")
+	}
+	if cfg.claimLease <= 0 {
+		return workerConfig{}, fmt.Errorf("OUTBOX_CLAIM_LEASE must be > 0")
 	}
 
 	return cfg, nil
@@ -304,50 +317,7 @@ func truncateErr(err error) string {
 	return msg
 }
 
-func getEnv(key, fallback string) string {
-	if value := strings.TrimSpace(os.Getenv(key)); value != "" {
-		return value
-	}
-	return fallback
-}
-
-func splitCSV(raw string) []string {
-	parts := strings.Split(raw, ",")
-	brokers := make([]string, 0, len(parts))
-	for _, part := range parts {
-		trimmed := strings.TrimSpace(part)
-		if trimmed != "" {
-			brokers = append(brokers, trimmed)
-		}
-	}
-	return brokers
-}
-
-func getEnvInt(key string, fallback int) int {
-	value := strings.TrimSpace(os.Getenv(key))
-	if value == "" {
-		return fallback
-	}
-	parsed, err := strconv.Atoi(value)
-	if err != nil {
-		return fallback
-	}
-	return parsed
-}
-
-func getEnvDuration(key string, fallback time.Duration) time.Duration {
-	value := strings.TrimSpace(os.Getenv(key))
-	if value == "" {
-		return fallback
-	}
-	d, err := time.ParseDuration(value)
-	if err != nil {
-		return fallback
-	}
-	return d
-}
-
-func outboxEventCarrier(ev mongoStorage.OutboxClickEvent) propagation.MapCarrier {
+func outboxEventCarrier(ev postgresStorage.OutboxClickEvent) propagation.MapCarrier {
 	carrier := propagation.MapCarrier{}
 	if strings.TrimSpace(ev.TraceParent) != "" {
 		carrier.Set("traceparent", strings.TrimSpace(ev.TraceParent))

@@ -11,12 +11,12 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/IgorGrieder/encurtador-url/internal/config"
 	"github.com/IgorGrieder/encurtador-url/internal/events"
 	"github.com/IgorGrieder/encurtador-url/internal/infrastructure/db"
 	"github.com/IgorGrieder/encurtador-url/internal/infrastructure/logger"
 	"github.com/IgorGrieder/encurtador-url/internal/infrastructure/telemetry"
-	"github.com/IgorGrieder/encurtador-url/internal/processing/links"
-	mongoStorage "github.com/IgorGrieder/encurtador-url/internal/storage/mongo"
+	postgresStorage "github.com/IgorGrieder/encurtador-url/internal/storage/postgres"
 	"github.com/segmentio/kafka-go"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -26,17 +26,17 @@ import (
 	"go.uber.org/zap"
 )
 
-type config struct {
-	appEnv        string
-	appName       string
-	appVersion    string
-	otelEndpoint  string
-	mongoURI      string
-	mongoDatabase string
+type consumerConfig struct {
+	appEnv       string
+	appName      string
+	appVersion   string
+	otelEndpoint string
+	postgresDSN  string
 
 	kafkaBrokers []string
 	kafkaTopic   string
 	kafkaGroupID string
+	workerID     string
 
 	fetchMaxWait   time.Duration
 	operationTTL   time.Duration
@@ -79,19 +79,15 @@ func main() {
 		}
 	}()
 
-	mongoConn, err := db.ConnectMongo(cfg.mongoURI, cfg.mongoDatabase)
+	pgConn, err := db.ConnectPostgres(context.Background(), cfg.postgresDSN)
 	if err != nil {
-		logger.Fatal("failed to connect to MongoDB", zap.Error(err))
+		logger.Fatal("failed to connect to PostgreSQL", zap.Error(err))
 	}
-	defer func() { _ = mongoConn.Disconnect() }()
+	defer pgConn.Close()
 
-	linkRepo, err := mongoStorage.NewLinksRepository(mongoConn)
+	clickProcessor, err := postgresStorage.NewClickEventProcessor(pgConn)
 	if err != nil {
-		logger.Fatal("failed to initialize links repository", zap.Error(err))
-	}
-	statsRepo, err := mongoStorage.NewClickStatsRepository(mongoConn)
-	if err != nil {
-		logger.Fatal("failed to initialize stats repository", zap.Error(err))
+		logger.Fatal("failed to initialize click event processor", zap.Error(err))
 	}
 
 	reader := kafka.NewReader(kafka.ReaderConfig{
@@ -116,6 +112,7 @@ func main() {
 		zap.Strings("kafka_brokers", cfg.kafkaBrokers),
 		zap.String("kafka_topic", cfg.kafkaTopic),
 		zap.String("kafka_group", cfg.kafkaGroupID),
+		zap.String("worker_id", cfg.workerID),
 	)
 
 	tracer := otel.Tracer("click-consumer")
@@ -145,7 +142,12 @@ func main() {
 			),
 		)
 
-		if err := processMessage(consumeCtx, msg, linkRepo, statsRepo, cfg.operationTTL); err != nil {
+		if err := processMessage(
+			consumeCtx,
+			msg,
+			clickProcessor,
+			cfg.operationTTL,
+		); err != nil {
 			span.RecordError(err)
 			span.SetStatus(codes.Error, "process click event failed")
 			logger.Error("failed to process click event",
@@ -180,8 +182,7 @@ func main() {
 func processMessage(
 	ctx context.Context,
 	msg kafka.Message,
-	linkRepo *mongoStorage.LinksRepository,
-	statsRepo *mongoStorage.ClickStatsRepository,
+	clickProcessor *postgresStorage.ClickEventProcessor,
 	operationTTL time.Duration,
 ) error {
 	var event events.ClickRecorded
@@ -194,6 +195,10 @@ func processMessage(
 	}
 	if strings.TrimSpace(event.Slug) == "" {
 		logger.Warn("click event missing slug, skipping", zap.String("event_id", event.EventID))
+		return nil
+	}
+	if strings.TrimSpace(event.EventID) == "" {
+		logger.Warn("click event missing eventId, skipping", zap.ByteString("payload", msg.Value))
 		return nil
 	}
 
@@ -213,87 +218,59 @@ func processMessage(
 	opCtx, cancel := context.WithTimeout(ctx, operationTTL)
 	defer cancel()
 
-	_, err := linkRepo.FindActiveBySlugAndIncClick(opCtx, event.Slug, occurredAt)
+	alreadyProcessed, countersApplied, err := clickProcessor.Process(opCtx, event.EventID, event.Slug, occurredAt)
 	if err != nil {
-		if errors.Is(err, links.ErrNotFound) || errors.Is(err, links.ErrExpired) {
-			// Event is stale relative to current data (e.g. deleted/expired). Safe to skip.
-			logger.Info("click event skipped for missing or expired link",
-				zap.String("event_id", event.EventID),
-				zap.String("slug", event.Slug),
-			)
-			return nil
-		}
 		return err
 	}
-
-	if err := statsRepo.IncDaily(opCtx, event.Slug, occurredAt); err != nil {
-		return err
+	if alreadyProcessed {
+		return nil
+	}
+	if !countersApplied {
+		logger.Info("click event skipped for missing or expired link",
+			zap.String("event_id", event.EventID),
+			zap.String("slug", event.Slug),
+		)
 	}
 
 	return nil
 }
 
-func loadConfig() (config, error) {
-	cfg := config{
-		appEnv:         getEnv("APP_ENV", "production"),
-		appName:        getEnv("APP_NAME", "encurtador-url"),
-		appVersion:     getEnv("APP_VERSION", "0.1.0"),
-		otelEndpoint:   getEnv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://jaeger:4318"),
-		mongoURI:       getEnv("MONGODB_URI", "mongodb://localhost:27017"),
-		mongoDatabase:  getEnv("MONGODB_DATABASE", "encurtador"),
-		kafkaBrokers:   splitCSV(getEnv("KAFKA_BROKERS", "kafka:9092")),
-		kafkaTopic:     getEnv("KAFKA_CLICK_TOPIC", "clicks.recorded"),
-		kafkaGroupID:   getEnv("KAFKA_CLICK_GROUP_ID", "click-analytics"),
-		fetchMaxWait:   getEnvDuration("KAFKA_CONSUMER_MAX_WAIT", 500*time.Millisecond),
-		operationTTL:   getEnvDuration("KAFKA_CONSUMER_OPERATION_TIMEOUT", 5*time.Second),
-		consumeBackoff: getEnvDuration("KAFKA_CONSUMER_BACKOFF", 500*time.Millisecond),
+func loadConfig() (cfg consumerConfig, _ error) {
+	cfg = consumerConfig{
+		appEnv:         config.GetEnv("APP_ENV", "production"),
+		appName:        config.GetEnv("APP_NAME", "encurtador-url"),
+		appVersion:     config.GetEnv("APP_VERSION", "0.1.0"),
+		otelEndpoint:   config.GetEnv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://jaeger:4318"),
+		postgresDSN:    config.GetEnv("DB_DSN", config.DefaultPostgresDSN()),
+		kafkaBrokers:   config.SplitCSV(config.GetEnv("KAFKA_BROKERS", "kafka:9092")),
+		kafkaTopic:     config.GetEnv("KAFKA_CLICK_TOPIC", "clicks.recorded"),
+		kafkaGroupID:   config.GetEnv("KAFKA_CLICK_GROUP_ID", "click-analytics"),
+		workerID:       config.GetEnv("KAFKA_CONSUMER_WORKER_ID", config.DefaultWorkerID("click-consumer")),
+		fetchMaxWait:   config.GetEnvDuration("KAFKA_CONSUMER_MAX_WAIT", 500*time.Millisecond),
+		operationTTL:   config.GetEnvDuration("KAFKA_CONSUMER_OPERATION_TIMEOUT", 5*time.Second),
+		consumeBackoff: config.GetEnvDuration("KAFKA_CONSUMER_BACKOFF", 500*time.Millisecond),
 	}
 
+	if strings.TrimSpace(cfg.postgresDSN) == "" {
+		return consumerConfig{}, fmt.Errorf("DB_DSN must not be empty")
+	}
 	if len(cfg.kafkaBrokers) == 0 {
-		return config{}, fmt.Errorf("KAFKA_BROKERS must contain at least one broker")
+		return consumerConfig{}, fmt.Errorf("KAFKA_BROKERS must contain at least one broker")
 	}
 	if strings.TrimSpace(cfg.kafkaTopic) == "" {
-		return config{}, fmt.Errorf("KAFKA_CLICK_TOPIC must not be empty")
+		return consumerConfig{}, fmt.Errorf("KAFKA_CLICK_TOPIC must not be empty")
 	}
 	if strings.TrimSpace(cfg.kafkaGroupID) == "" {
-		return config{}, fmt.Errorf("KAFKA_CLICK_GROUP_ID must not be empty")
+		return consumerConfig{}, fmt.Errorf("KAFKA_CLICK_GROUP_ID must not be empty")
 	}
 	if cfg.operationTTL <= 0 {
-		return config{}, fmt.Errorf("KAFKA_CONSUMER_OPERATION_TIMEOUT must be > 0")
+		return consumerConfig{}, fmt.Errorf("KAFKA_CONSUMER_OPERATION_TIMEOUT must be > 0")
+	}
+	if strings.TrimSpace(cfg.workerID) == "" {
+		return consumerConfig{}, fmt.Errorf("KAFKA_CONSUMER_WORKER_ID must not be empty")
 	}
 
 	return cfg, nil
-}
-
-func getEnv(key, fallback string) string {
-	if value := strings.TrimSpace(os.Getenv(key)); value != "" {
-		return value
-	}
-	return fallback
-}
-
-func splitCSV(raw string) []string {
-	parts := strings.Split(raw, ",")
-	values := make([]string, 0, len(parts))
-	for _, part := range parts {
-		trimmed := strings.TrimSpace(part)
-		if trimmed != "" {
-			values = append(values, trimmed)
-		}
-	}
-	return values
-}
-
-func getEnvDuration(key string, fallback time.Duration) time.Duration {
-	value := strings.TrimSpace(os.Getenv(key))
-	if value == "" {
-		return fallback
-	}
-	d, err := time.ParseDuration(value)
-	if err != nil {
-		return fallback
-	}
-	return d
 }
 
 func contextFromKafkaHeaders(parent context.Context, headers []kafka.Header) context.Context {
