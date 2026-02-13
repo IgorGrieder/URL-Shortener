@@ -1,4 +1,6 @@
-.PHONY: help build run run-outbox-worker run-click-consumer test clean docker-up docker-down docker-build lint k6-crud k6-crud-smoke
+.PHONY: help build run run-outbox-worker run-click-consumer test clean docker-up docker-down docker-build lint k6-crud k6-crud-smoke migrate-up migrate-down migrate-status sqlc
+
+DB_DSN ?= host=localhost port=5432 user=postgres password=postgres dbname=encurtador sslmode=disable
 
 help:
 	@echo "Available commands:"
@@ -8,9 +10,13 @@ help:
 	@echo "  make run-click-consumer - Run Kafka click consumer locally"
 	@echo "  make test        - Run tests"
 	@echo "  make clean       - Clean build artifacts"
-	@echo "  make docker-up   - Start containers (app + mongo)"
+	@echo "  make docker-up   - Start containers (app + postgres)"
 	@echo "  make docker-down - Stop containers"
 	@echo "  make docker-build - Build and start containers"
+	@echo "  make migrate-up - Run PostgreSQL migrations"
+	@echo "  make migrate-down - Rollback PostgreSQL migration"
+	@echo "  make migrate-status - Show PostgreSQL migration status"
+	@echo "  make sqlc        - Generate sqlc code"
 	@echo "  make lint        - Run golangci-lint (if installed)"
 	@echo "  make k6-crud-smoke - Run quick CRUD functional test (k6)"
 	@echo "  make k6-crud      - Run CRUD functional test profile (k6)"
@@ -52,3 +58,15 @@ k6-crud-smoke:
 
 k6-crud:
 	@LT_VUS=$${LT_VUS:-5} LT_ITERATIONS=$${LT_ITERATIONS:-30} LT_HTTP_TIMEOUT=$${LT_HTTP_TIMEOUT:-10s} LT_MAX_DURATION=$${LT_MAX_DURATION:-2m} k6 run ./tests/k6/api_gateway_crud.js
+
+migrate-up:
+	@goose -dir internal/storage/postgres/migrations postgres "$(DB_DSN)" up
+
+migrate-down:
+	@goose -dir internal/storage/postgres/migrations postgres "$(DB_DSN)" down
+
+migrate-status:
+	@goose -dir internal/storage/postgres/migrations postgres "$(DB_DSN)" status
+
+sqlc:
+	@sqlc generate

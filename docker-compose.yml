@@ -4,21 +4,19 @@ x-app-base: &app-base
     - APP_PORT=8080
     - APP_ENV=production
     - APP_NAME=encurtador-url
-    - MONGODB_URI=mongodb://mongo:27017
-    - MONGODB_DATABASE=encurtador
-    - REDIS_ADDR=redis:6379
-    - REDIS_PASSWORD=
-    - REDIS_DB=0
+    - DB_HOST=postgres
+    - DB_PORT=5432
+    - DB_USER=postgres
+    - DB_PASSWORD=postgres
+    - DB_NAME=encurtador
+    - DB_SSL_MODE=disable
     - SHORTENER_BASE_URL=http://localhost:8080
     - SLUG_LENGTH=6
     - REDIRECT_STATUS=302
     - API_KEYS=${API_KEYS:-}
-    - CREATE_RATE_LIMIT_PER_MINUTE=${CREATE_RATE_LIMIT_PER_MINUTE:-60}
     - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-http://jaeger:4318}
   depends_on:
-    mongo:
-      condition: service_healthy
-    redis:
+    postgres:
       condition: service_healthy
   restart: unless-stopped
 
@@ -26,12 +24,16 @@ x-worker-base: &worker-base
   build: .
   environment:
     - APP_ENV=production
-    - MONGODB_URI=mongodb://mongo:27017
-    - MONGODB_DATABASE=encurtador
+    - DB_HOST=postgres
+    - DB_PORT=5432
+    - DB_USER=postgres
+    - DB_PASSWORD=postgres
+    - DB_NAME=encurtador
+    - DB_SSL_MODE=disable
     - KAFKA_BROKERS=kafka:9092
     - KAFKA_CLICK_TOPIC=clicks.recorded
   depends_on:
-    mongo:
+    postgres:
       condition: service_healthy
     kafka:
       condition: service_started
@@ -90,8 +92,12 @@ services:
     command: ["./click-consumer"]
     environment:
       - APP_ENV=production
-      - MONGODB_URI=mongodb://mongo:27017
-      - MONGODB_DATABASE=encurtador
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_USER=postgres
+      - DB_PASSWORD=postgres
+      - DB_NAME=encurtador
+      - DB_SSL_MODE=disable
       - KAFKA_BROKERS=kafka:9092
       - KAFKA_CLICK_TOPIC=clicks.recorded
       - KAFKA_CLICK_GROUP_ID=click-analytics
@@ -123,29 +129,22 @@ services:
       - prometheus
       - jaeger
 
-  mongo:
-    image: mongo:7.0
+  postgres:
+    image: postgres:16-alpine
     ports:
-      - "27017:27017"
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=encurtador
     volumes:
-      - mongo_data:/data/db
+      - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      test: ["CMD-SHELL", "pg_isready -U postgres -d encurtador"]
       interval: 10s
       timeout: 5s
       retries: 5
       start_period: 10s
-
-  redis:
-    image: redis:7.2-alpine
-    ports:
-      - "6379:6379"
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 3s
-      retries: 5
-      start_period: 5s
 
   kafka:
     image: confluentinc/cp-kafka:7.7.7
@@ -167,6 +166,6 @@ services:
       - CLUSTER_ID=MkU3OEVBNTcwNTJENDM2Qk
 
 volumes:
-  mongo_data:
+  postgres_data:
   prometheus_data:
   grafana_data:
