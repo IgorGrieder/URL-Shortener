@@ -76,7 +76,7 @@ var (
 func normalizePath(path string) string {
 	// Replace UUIDs
 	path = uuidPattern.ReplaceAllString(path, ":id")
-	// Replace MongoDB ObjectIds
+	// Replace 24-char hex IDs
 	path = objectIdPattern.ReplaceAllString(path, ":id")
 	// Replace any remaining numeric IDs
 	path = numericPattern.ReplaceAllString(path, "/:id")
